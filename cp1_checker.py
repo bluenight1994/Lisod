@@ -28,7 +28,7 @@ socketList = []
 RECV_TOTAL_TIMEOUT = 0.1
 RECV_EACH_TIMEOUT = 0.05
 
-
+print numConnections
 for i in xrange(numConnections):
     s = socket(AF_INET, SOCK_STREAM)
     s.connect((serverHost, serverPort))
@@ -41,6 +41,7 @@ for i in xrange(numTrials):
     randomLen = []
     socketSubset = random.sample(socketList, numConnections)
     for j in xrange(numWritesReads):
+        print j
         random_len = random.randrange(1, numBytes)
         random_string = os.urandom(random_len)
         randomLen.append(random_len)
