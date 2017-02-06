@@ -23,6 +23,7 @@
 *.hex
 lisod
 echo_client
+echo_server
 loglib_test
 
 #test
