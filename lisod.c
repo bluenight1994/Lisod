@@ -15,31 +15,21 @@
  *
  ***********************************************************************************
  */
-
-#include <netinet/in.h>
-#include <netinet/ip.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#include <arpa/inet.h>
+#include "lisod.h"
 
 #define BUF_SIZE 4096
-#define ARG_NUMBER 0
+#define ARG_NUMBER 1
 #define LISTENQ 1024
 
 void usage();
 int  open_listen_socket(int port);
 int  close_socket(int sock);
-
+void init_pool(int listenfd, pool *p);
+void add_client(int newfd, pool *p);
+void handle_clients(int listen, pool *p);
 
 int main(int argc, char* argv[]) 
 {
-	fd_set master;
-	fd_set read_fds;
-	int fdmax;
-
 	int listen_sock;
 	int newfd;
 	struct sockaddr_storage remoteaddr;
@@ -48,74 +38,44 @@ int main(int argc, char* argv[])
 	int http_port;
 
 	int i;
-
-	char buf[BUF_SIZE];
 	int nbytes;
 
-	// if (argc != ARG_NUMBER + 1) {
-	// 	usage();
-	// }
+	if (argc != ARG_NUMBER + 1) {
+		usage();
+	}
 
 	http_port = atoi(argv[1]);
-
+	static pool pool;
 	fprintf(stdout, "------ Echo Server ------\n");
 
 	listen_sock = open_listen_socket(http_port);
-
-	FD_SET(listen_sock, &master);
-	fdmax = listen_sock;
+	init_pool(listen_sock, &pool);
 
 	char remoteIP[INET6_ADDRSTRLEN];
 
 	while (1) {
-		read_fds = master;
-		if (select(fdmax+1, &read_fds, NULL, NULL, NULL) == -1) {
+		pool.ready_set = pool.read_set;
+		pool.nready = select(pool.maxfd+1, &pool.ready_set, NULL, NULL, NULL);
+
+		if (pool.nready == -1) {
 			fprintf(stderr, "select error\n");
 			return EXIT_FAILURE;
 		}
+		/* listen discriptor ready */
+		if (FD_ISSET(listen_sock, &pool.ready_set)) {
+			addrlen = sizeof remoteaddr;
+			newfd = accept(listen_sock, (struct sockaddr *)&remoteaddr, &addrlen);
 
-		for (i = 0; i <= fdmax; i++) {
-			if (FD_ISSET(i, &read_fds)) {
-				if (i == listen_sock) {
-					addrlen = sizeof remoteaddr;
-					newfd = accept(listen_sock, (struct sockaddr *)&remoteaddr, &addrlen);
-
-					if (newfd == -1) {
-
-					} else {
-						FD_SET(newfd, &master);
-						if (newfd > fdmax) {
-							fdmax = newfd;
-						}
-						printf("selectserver: new connection.\n");
-					}
-				} else {
-					if ((nbytes = recv(i, buf, sizeof buf, 0)) <= 0) {
-						if (nbytes == 0) {
-							fprintf(stdout, "selectserver: socket %d hung up\n", i);
-						} else {
-							fprintf(stderr, "recv error");
-						}
-						FD_CLR(i, &master);
-						if (close_socket(i)) {
-							close_socket(listen_sock);
-							fprintf(stderr, "error closing client socket.\n");
-							return EXIT_FAILURE;
-						}
-					} else {
-						fprintf(stdout, "Server received %d bytes data on %d\n", (int)nbytes, i);
-						if (send(i, buf, nbytes, 0) != nbytes) {
-							close_socket(listen_sock);
-							close_socket(i);
-							fprintf(stderr, "error occured when sending data to client\n");
-							return EXIT_FAILURE;
-						}
-						fprintf(stdout, "Server sent %d bytes data to %d\n", (int)nbytes, i);
-                 		memset(buf, 0, BUF_SIZE);
-					}
-				}
+			if (newfd == -1) {
+				fprintf(stderr, "establishing new connection error\n");
+			} else {
+				/* add new client to pool */
+				add_client(newfd, &pool);
+				fprintf(stdout, "selectserver: new connection.\n");
 			}
 		}
+
+		handle_clients(listen_sock, &pool);
 	}
 
 	close(listen_sock);
@@ -176,5 +136,71 @@ int  open_listen_socket(int port) {
     return sock;
 }
 
+void init_pool(int listenfd, pool *p) {
+	int i;
+	p->maxi = -1;
+	for (i = 0; i < FD_SETSIZE; i++)
+		p->clientfd[i] = -1;
+	p->maxfd = listenfd;
+	FD_ZERO(&p->read_set);
+	FD_SET(listenfd, &p->read_set);
+}
+
+void add_client(int newfd, pool *p) {
+	int i;
+	p->nready--;
+	for (i = 0; i < FD_SETSIZE; i++) {
+		if (p->clientfd[i] < 0) {
+			p->clientfd[i] = newfd;
+
+			FD_SET(newfd, &p->read_set);
+			if (newfd > p->maxfd)
+				p->maxfd = newfd;
+			if (i > p->maxi)
+				p->maxi = i;
+			break;
+		}
+	}
+
+	if (i == FD_SETSIZE)
+		fprintf(stderr, "add_client error: Too many clients\n");
+}
+
+void handle_clients(int listen, pool *p) {
+	int i, curfd, n;
+	int nbytes;
+	char buf[BUF_SIZE];
+	for (i = 0; (i <= p->maxi) && (p->nready > 0); i++) {
+		curfd = p->clientfd[i];
+
+		if ((curfd > 0) && (FD_ISSET(curfd, &p->ready_set))) {
+			p -> nready--;
+			if ((nbytes = recv(curfd, buf, sizeof buf, 0)) <= 0) {
+				if (nbytes == 0) {
+					fprintf(stdout, "selectserver: socket %d hung up\n", i);
+				} else {
+					fprintf(stderr, "recv error");
+				}
+				FD_CLR(curfd, &p->read_set);
+				p->clientfd[i] = -1;
+				if (close_socket(curfd)) {
+					close_socket(listen);
+					fprintf(stderr, "error closing client socket.\n");
+					// return EXIT_FAILURE;
+				}
+			} else {
+				fprintf(stdout, "Server received %d bytes data on %d\n", (int)nbytes, i);
+				if (send(curfd, buf, nbytes, 0) != nbytes) {
+					close_socket(listen);
+					close_socket(curfd);
+					fprintf(stderr, "error occured when sending data to client\n");
+					// return EXIT_FAILURE;
+				}
+				fprintf(stdout, "Server sent %d bytes data to %d\n", (int)nbytes, i);
+				memset(buf, 0, BUF_SIZE);
+			}
+		}
+	}
+}
 
 
