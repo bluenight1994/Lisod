@@ -18,7 +18,7 @@
 #include "lisod.h"
 
 #define BUF_SIZE 4096
-#define ARG_NUMBER 1
+#define ARG_NUMBER 2
 #define LISTENQ 1024
 
 void usage();
@@ -28,30 +28,34 @@ void init_pool(int listenfd, pool *p);
 void add_client(int newfd, pool *p);
 void handle_clients(int listen, pool *p);
 
+FILE *fp;
+
 int main(int argc, char* argv[]) 
 {
-	int listen_sock;
-	int newfd;
+    int listen_sock;
+    int newfd;
 	struct sockaddr_storage remoteaddr;
 	socklen_t addrlen;
+    char* logfile;
 
 	int http_port;
-
-	int i;
-	int nbytes;
 
 	if (argc != ARG_NUMBER + 1) {
 		usage();
 	}
 
 	http_port = atoi(argv[1]);
+    logfile = argv[2];
+    fp = open_log(logfile);
+
 	static pool pool;
 	fprintf(stdout, "------ Echo Server ------\n");
+    Log(fp, "Start Lisod Server\n");
 
 	listen_sock = open_listen_socket(http_port);
 	init_pool(listen_sock, &pool);
 
-	char remoteIP[INET6_ADDRSTRLEN];
+	// char remoteIP[INET6_ADDRSTRLEN];
 
 	while (1) {
 		pool.ready_set = pool.read_set;
@@ -71,7 +75,7 @@ int main(int argc, char* argv[])
 			} else {
 				/* add new client to pool */
 				add_client(newfd, &pool);
-				fprintf(stdout, "selectserver: new connection.\n");
+                Log(fp, "new connection from client\n");
 			}
 		}
 
@@ -94,6 +98,7 @@ int close_socket(int sock) {
     if (close(sock))
     {
         fprintf(stderr, "Failed closing socket.\n");
+        Log(fp, "Failed closing socket.\n");
         return 1;
     }
     return 0;
@@ -107,12 +112,12 @@ int  open_listen_socket(int port) {
 
 	/* create a socket */
 	if ((sock = socket(PF_INET, SOCK_STREAM, 0)) == -1) {
-		fprintf(stderr, "Failed creating socket.\n");
+        Log(fp, "Fail to create socket\n");
 		return EXIT_FAILURE;
 	}
 
     if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
-		fprintf(stderr, "Failed set socketopt.\n");
+        Log(fp, "Fail to set socketopt\n");
 		return EXIT_FAILURE;
 	}
 
@@ -123,13 +128,13 @@ int  open_listen_socket(int port) {
     /* servers bind sockets to ports---notify the OS they accept connections */
     if (bind(sock, (struct sockaddr *) &addr, sizeof(addr))) {
         close_socket(sock);
-        fprintf(stderr, "Failed binding socket.\n");
+        Log(fp, "Fail to bing socket\n");
         return EXIT_FAILURE;
     }
 
     if (listen(sock, LISTENQ)) {
 		close_socket(sock);
-		fprintf(stderr, "Error listening on socket.\n");
+        Log(fp, "Fail to listen on socket\n");
         return EXIT_FAILURE;
     }
 
@@ -163,11 +168,11 @@ void add_client(int newfd, pool *p) {
 	}
 
 	if (i == FD_SETSIZE)
-		fprintf(stderr, "add_client error: Too many clients\n");
+        Log(fp, "Error when adding client, too many clients\n");
 }
 
 void handle_clients(int listen, pool *p) {
-	int i, curfd, n;
+	int i, curfd;
 	int nbytes;
 	char buf[BUF_SIZE];
 	for (i = 0; (i <= p->maxi) && (p->nready > 0); i++) {
@@ -177,26 +182,26 @@ void handle_clients(int listen, pool *p) {
 			p -> nready--;
 			if ((nbytes = recv(curfd, buf, sizeof buf, 0)) <= 0) {
 				if (nbytes == 0) {
-					fprintf(stdout, "selectserver: socket %d hung up\n", i);
+                    Log(fp, "sock %d hung up\n", i);
 				} else {
-					fprintf(stderr, "recv error");
+                    Log(fp, "Error occurred when receiving data from client\n");
 				}
 				FD_CLR(curfd, &p->read_set);
 				p->clientfd[i] = -1;
 				if (close_socket(curfd)) {
 					close_socket(listen);
-					fprintf(stderr, "error closing client socket.\n");
+                    Log(fp, "Error occurred when trying to close client socket %d\n", curfd);
 					// return EXIT_FAILURE;
 				}
 			} else {
-				fprintf(stdout, "Server received %d bytes data on %d\n", (int)nbytes, i);
+                Log(fp, "Server received %d bytes data on %d\n", (int)nbytes, i);
 				if (send(curfd, buf, nbytes, 0) != nbytes) {
 					close_socket(listen);
 					close_socket(curfd);
-					fprintf(stderr, "error occured when sending data to client\n");
+                    Log(fp, "Error occurred when sending data to client.\n");
 					// return EXIT_FAILURE;
 				}
-				fprintf(stdout, "Server sent %d bytes data to %d\n", (int)nbytes, i);
+                Log(fp, "Server sent %d bytes data to %d\n", (int)nbytes, i);
 				memset(buf, 0, BUF_SIZE);
 			}
 		}

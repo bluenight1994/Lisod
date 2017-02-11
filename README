@@ -65,7 +65,7 @@ The test Python script takes a series of arguments and can be run as:
                     cd src
                     make
                     ./echo_server
-                    ./cp1_checker 127.0.0.1 9999 1000 10 2048 500
+                    ./cp1_checker.py 127.0.0.1 9999 1000 10 2048 500
 
 with arguments as such:
 
