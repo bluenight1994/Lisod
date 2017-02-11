@@ -32,5 +32,7 @@ static_site
 # Old file
 MakefileOld
 
+*.log
+
 static_site
 
