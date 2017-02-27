@@ -40,6 +40,7 @@ void Log(FILE *fp, char *msg, ...) {
     va_list ap;
     va_start(ap, msg);
     vfprintf(fp, msg, ap);
+    fflush(fp);
 }
 
 

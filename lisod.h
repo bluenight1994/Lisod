@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <errno.h>
 #include "log.h"
 #include "parse.h"
 
@@ -21,8 +22,10 @@
 #define REQ_PIPE                2
 
 #define DATE_SIZE     35
-#define BUFF_SIZE     8192
 #define FILETYPE_SIZE 15
+#define BUFF_SIZE     8192
+#define FIELD_SIZE    4096
+#define MIN_LINE      64
 
 typedef struct headers{
     char *key;
@@ -58,14 +61,28 @@ typedef struct buff {
 } Buff;
 
 typedef struct {
-	int maxfd;
-	fd_set read_set;	/* the set of fd that liso server is looking at before recv */
-	fd_set read_ready_set;	/* the set of fd that is ready to recv */
-	fd_set write_set;
-	fd_set write_ready_set;
-	int nready;		/* the num of fd that is ready to recv or send */
-	int maxi;		/* the max index of fd*/
-	int clientfd[FD_SETSIZE];
-    Buff *buf[FD_SETSIZE];
-	char* www;
+    int rio_fd;
+    int rio_cnt;
+    char *rio_bufptr;
+    char rio_buf[BUFF_SIZE];
+} rio_t;
+
+typedef struct {
+    int maxfd;
+    int nready;
+    int maxi;
+    int clientfd[FD_SETSIZE];
+    fd_set read_set;
+    fd_set ready_set;
+    rio_t *clientrio[FD_SETSIZE];
+	char *www;
 } pool;
+
+typedef struct {
+    int content_len;
+    char method[FIELD_SIZE];
+    char version[FIELD_SIZE];
+    char uri[FIELD_SIZE];
+    char filename[FIELD_SIZE];
+} HTTPContext;
+
