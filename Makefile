@@ -8,25 +8,29 @@
 #                                                                              #
 ################################################################################
 
-# default: echo_client lisod
 
-# echo_client:
-# 	@gcc echo_client.c -o echo_client -Wall -Werror
 
-# liso:
-# 	@gcc lisod.c log.c -o lisod -Wall -Werror -lefence
+CC=gcc
+CFLAGS=-I.
+DEPS = parse.h y.tab.h log.h
+OBJ = y.tab.o lex.yy.o log.o parse.o lisod.o
+FLAGS = -g -Wall
 
-# clean:
-# 	@rm echo_client lisod
+default:all
 
-CC = gcc
-CFLAGS = -Wall -Werror
-EXES = lisod 
+all: lisod
 
-all: $(EXES)
+lex.yy.c: lexer.l
+	flex $^
 
-lisod:
-	$(CC) $(CFLAGS) lisod.c log.c -o lisod
+y.tab.c: parser.y
+	yacc -d $^
+
+%.o: %.c $(DEPS)
+	$(CC) $(FLAGS) -c -o $@ $< $(CFLAGS)
+
+lisod: $(OBJ)
+	$(CC) -o $@ $^ $(CFLAGS)
 
 clean:
-	@rm -rf $(EXES) lisod.log lisod.lock
+	rm -f *~ *.o example lex.yy.c y.tab.c y.tab.h
