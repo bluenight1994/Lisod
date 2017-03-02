@@ -1,8 +1,13 @@
+#ifndef _PARSE_H_
+#define _PARSE_H_
+
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "lisod.h"
 
 #define SUCCESS 0
+#define FIELD_SIZE    4096
 
 //Header field
 typedef struct
@@ -21,4 +26,16 @@ typedef struct
 	int header_count;
 } Request;
 
-Request* parse(char *buffer, int size,int socketFd);
+typedef struct {
+    int  content_len;
+    int  keep_alive;
+    int  is_valid;
+    char method[FIELD_SIZE];
+    char version[FIELD_SIZE];
+    char uri[FIELD_SIZE];
+    char filename[FIELD_SIZE];
+} HTTPContext;
+
+Request* parse(char *buffer, int size, HTTPContext *context);
+
+#endif
