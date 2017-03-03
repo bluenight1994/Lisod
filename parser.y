@@ -196,7 +196,7 @@ request_line: token t_sp text t_sp text t_crlf {
 
 request_header: token ows t_colon ows text ows t_crlf {
 	YPRINTF("request_Header:\n%s\n%s\n",$1,$5);
-  strcpy(parsing_request->headers[parsing_request->header_count].header_name, $1);
+  	strcpy(parsing_request->headers[parsing_request->header_count].header_name, $1);
 	strcpy(parsing_request->headers[parsing_request->header_count].header_value, $5);
 		parsing_request->headers = (Request_header *) realloc(parsing_request->headers,sizeof(Request_header)*1);
 	parsing_request->header_count++;

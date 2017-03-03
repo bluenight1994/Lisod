@@ -10,10 +10,11 @@ int  open_listen_socket(int port);
 int  close_client_socket(int id, pool *p);
 void init_pool(int listenfd, pool *p);
 void add_client(int newfd, pool *p, struct sockaddr_in *cli_addr, int port);
-void handle_clients(int listen, pool *p);
+void handle_clients(pool *p);
 void process_request(int i, pool *p, HTTPContext *context);
 
 /* server request handler */
+void serve_request_handler(int client_fd, HTTPContext *context);
 void serve_error_handler(int client_fd, HTTPContext *context, char *errnum, char *shortmsg, char *longmsg);
 void serve_get_handler(int client_fd, HTTPContext *context);
 void serve_head_handler(int client_fd, HTTPContext *context);
@@ -89,7 +90,7 @@ int main(int argc, char* argv[])
                 add_client(newfd, &pool, (struct sockaddr_in *) &cli_addr, http_port);
             }
         }
-        handle_clients(listen_sock, &pool);
+        handle_clients(&pool);
     }
 
     close(listen_sock);
@@ -170,7 +171,8 @@ void init_pool(int listenfd, pool *p)
     FD_SET(listenfd, &p->read_set);
 }
 
-void add_client(int client_socket, pool *p, struct sockaddr_in *cli_addr, int port) {
+void add_client(int client_socket, pool *p, struct sockaddr_in *cli_addr, int port)
+{
     int i;
     p->nready--;
 
@@ -189,7 +191,7 @@ void add_client(int client_socket, pool *p, struct sockaddr_in *cli_addr, int po
     }
 }
 
-void handle_clients(int listen, pool *p)
+void handle_clients(pool *p)
 {
     int i, curfd;
 
@@ -255,14 +257,14 @@ void process_request(int i, pool *p, HTTPContext *context)
     if (!is_valid_method(request->http_method))
     {
         context->keep_alive = 0;
-        serve_error_handler(curfd, context, "501", "Not Implemented", "The method is not implemented by the server");
+        serve_error_handler(curfd, context, "501", "Not Implemented", "HTTP method is not implemented by the server");
         return;
     }
 
     if (strcasecmp(context->version, "HTTP/1.1"))
     {
         context->keep_alive = 0;
-        serve_error_handler(curfd, context, "505", "HTTP Version not supported", "HTTP/1.0 is not supported by Liso server");
+        serve_error_handler(curfd, context, "505", "HTTP Version not supported", "The current http version HTTP/1.0 is not supported by Liso server");
         return;
     }
 
@@ -279,29 +281,19 @@ void process_request(int i, pool *p, HTTPContext *context)
     /* parser of request header subroutine */
     if (parse_header(curfd, request, context) != 0) return;
 
-    if (!strcasecmp(context->method, "GET"))
-        serve_get_handler(curfd, context);
-    if (!strcasecmp(context->method, "POST"))
-        serve_post_handler(curfd, context);
-    if (!strcasecmp(context->method, "HEAD"))
-        serve_head_handler(curfd, context);
+    serve_request_handler(curfd, context);
 
+    return;
 }
 
 int is_valid_method(char *method)
 {
     if (!strcasecmp(method, "GET"))
-    {
         return 1;
-    }
     else if (!strcasecmp(method, "POST"))
-    {
         return 1;
-    }
     else if (!strcasecmp(method, "HEAD"))
-    {
         return 1;
-    }
     return 0;
 }
 
@@ -358,28 +350,32 @@ char *get_header_value_by_key(char *key, Request *request)
     return NULL;
 }
 
-void serve_error_handler(int client_fd, HTTPContext *context, char *errnum, char *shortmsg, char *longmsg)
+void get_filetype(char *filename, char *filetype)
 {
-    char buff[BUFF_SIZE], body[BUFF_SIZE], date[BUFF_SIZE];
+    if (strstr(filename, ".html"))
+        strcpy(filetype, "text/html");
+    else if (strstr(filename, ".css"))
+        strcpy(filetype, "text/css");
+    else if (strstr(filename, ".js"))
+        strcpy(filetype, "application/javascript");
+    else if (strstr(filename, ".jpg"))
+        strcpy(filetype, "image/jpeg");
+    else if (strstr(filename, ".png"))
+        strcpy(filetype, "image/png");
+    else if (strstr(filename, ".gif"))
+        strcpy(filetype, "image/gif");
+    else
+        strcpy(filetype, "text/plain");
+}
 
-    // HTTP error response body
-    sprintf(body, "<html><title>Server Error</title>");
-    sprintf(body, "%s<body>\r\n", body);
-    sprintf(body, "%sError %s -- %s\r\n", body, errnum, shortmsg);
-    sprintf(body, "%s<br><p>%s</p></body></html>\r\n", body, longmsg);
-
-    get_time(date);
-
-    // HTTP error response header
-    sprintf(buff, "HTTP/1.1 %s %s\r\n", errnum, shortmsg);
-    sprintf(buff, "%sServer: Liso/1.0\r\n", buff);
-    sprintf(buff, "%sDate: %s\r\n", buff, date);
-    if (!context->keep_alive) sprintf(buff, "%sConnection: close\r\n", buff);
-    sprintf(buff, "%sContent-type: text/html\r\n", buff);
-    sprintf(buff, "%sContent-length: %d\r\n\r\n", buff, (int) strlen(body));
-
-    send(client_fd, buff, strlen(buff), 0);
-    send(client_fd, body, strlen(body), 0);
+void serve_request_handler(int client_fd, HTTPContext *context)
+{
+    if (!strcasecmp(context->method, "GET"))
+        serve_get_handler(client_fd, context);
+    if (!strcasecmp(context->method, "POST"))
+        serve_post_handler(client_fd, context);
+    if (!strcasecmp(context->method, "HEAD"))
+        serve_head_handler(client_fd, context);
 }
 
 void serve_get_handler(int client_fd, HTTPContext *context)
@@ -419,24 +415,6 @@ void serve_head_handler(int client_fd, HTTPContext *context)
     send(client_fd, buff, strlen(buff), 0);
 }
 
-void get_filetype(char *filename, char *filetype)
-{
-    if (strstr(filename, ".html"))
-        strcpy(filetype, "text/html");
-    else if (strstr(filename, ".css"))
-        strcpy(filetype, "text/css");
-    else if (strstr(filename, ".js"))
-        strcpy(filetype, "application/javascript");
-    else if (strstr(filename, ".png"))
-        strcpy(filetype, "image/png");
-    else if (strstr(filename, ".gif"))
-        strcpy(filetype, "image/gif");
-    else if (strstr(filename, ".jpg"))
-        strcpy(filetype, "image/jpeg");
-    else
-        strcpy(filetype, "text/plain");
-}
-
 int serve_body_handler(int client_fd, HTTPContext *context)
 {
     int fd, filesize;
@@ -472,4 +450,28 @@ void serve_post_handler(int client_fd, HTTPContext *context)
     sprintf(buff, "%sContent-Length: 0\r\n", buff);
     sprintf(buff, "%sContent-Type: text/html\r\n\r\n", buff);
     send(client_fd, buff, strlen(buff), 0);
+}
+
+void serve_error_handler(int client_fd, HTTPContext *context, char *errnum, char *shortmsg, char *longmsg)
+{
+    char buff[BUFF_SIZE], body[BUFF_SIZE], date[BUFF_SIZE];
+
+    // HTTP error response body
+    sprintf(body, "<html><title>Server Error</title>");
+    sprintf(body, "%s<body>\r\n", body);
+    sprintf(body, "%sError %s -- %s\r\n", body, errnum, shortmsg);
+    sprintf(body, "%s<br><p>%s</p></body></html>\r\n", body, longmsg);
+
+    get_time(date);
+
+    // HTTP error response header
+    sprintf(buff, "HTTP/1.1 %s %s\r\n", errnum, shortmsg);
+    sprintf(buff, "%sServer: Liso/1.0\r\n", buff);
+    sprintf(buff, "%sDate: %s\r\n", buff, date);
+    if (!context->keep_alive) sprintf(buff, "%sConnection: close\r\n", buff);
+    sprintf(buff, "%sContent-type: text/html\r\n", buff);
+    sprintf(buff, "%sContent-length: %d\r\n\r\n", buff, (int) strlen(body));
+
+    send(client_fd, buff, strlen(buff), 0);
+    send(client_fd, body, strlen(body), 0);
 }
