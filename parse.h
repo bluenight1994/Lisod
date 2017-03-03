@@ -4,7 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "lisod.h"
+#include "liso.h"
 
 #define SUCCESS 0
 #define FIELD_SIZE    4096

@@ -1,27 +1,11 @@
-/********************************************************************************
- *    Documentation:                                                            *
- *                                                                              *
- *    select() give the server the power to monitor several sockets             *
- *    at the same time.                                                         *
- *    will tell which ones are ready for reading, which are ready for           * 
- *    writing and which sockets have raised exceptions.                         *        
- *                                                                              *
- *    int select(int numdfs, fd_set *readfds, fd_set *writefds,                 *
- *			fd_set *exceptfds, struct timeval *timeout);                        *
- *                                                                              *
- *    When select() returns, readfds will be modified to reflect                *
- *    which of the file descriptors you selected which is ready for reading.    *
- *                                                                              *
- *                                                                              *
- *                                                                              *
- ********************************************************************************/
- 
-#include "lisod.h"
+#include "liso.h"
 
 #define ARG_NUMBER 3
 #define LISTENQ 1024
 
 void usage();
+
+/* server basic subroutine */
 int  open_listen_socket(int port);
 int  close_client_socket(int id, pool *p);
 void init_pool(int listenfd, pool *p);
@@ -29,15 +13,16 @@ void add_client(int newfd, pool *p, struct sockaddr_in *cli_addr, int port);
 void handle_clients(int listen, pool *p);
 void process_request(int i, pool *p, HTTPContext *context);
 
-void serve_error(int client_fd, HTTPContext *context, char *errnum, char *shortmsg, char *longmsg);
-void serve_get(int client_fd, HTTPContext *context);
-void serve_head(int client_fd, HTTPContext *context);
-int  serve_body(int client_fd, HTTPContext *context);
-void serve_post(int client_fd, HTTPContext *context);
+/* server request handler */
+void serve_error_handler(int client_fd, HTTPContext *context, char *errnum, char *shortmsg, char *longmsg);
+void serve_get_handler(int client_fd, HTTPContext *context);
+void serve_head_handler(int client_fd, HTTPContext *context);
+int  serve_body_handler(int client_fd, HTTPContext *context);
+void serve_post_handler(int client_fd, HTTPContext *context);
 
 /* request parser methods */
 int  parse_uri(pool *p, char *uri, char* filename);
-int  parse_header(Request *request, HTTPContext *context);
+int  parse_header(int socketfd, Request *request, HTTPContext *context);
 
 /* util methods */
 void get_time(char *date);
@@ -45,6 +30,7 @@ void get_filetype(char *filename, char *filetype);
 int  is_valid_method(char *method);
 char *get_header_value_by_key(char *key, Request *request);
 
+/* file pointer to write log */
 FILE *fp;
 
 int main(int argc, char* argv[]) 
@@ -68,8 +54,7 @@ int main(int argc, char* argv[])
     fp = open_log(logfile);
 
     static pool pool;
-    fprintf(stdout, "------ Echo Server ------\n");
-    Log(fp, "Start Lisod Server\n");
+    Log(fp, "Start Liso Server\n");
 
     listen_sock = open_listen_socket(http_port);
     init_pool(listen_sock, &pool);
@@ -83,6 +68,7 @@ int main(int argc, char* argv[])
         if (pool.nready == -1)
         {
             fprintf(stderr, "select error\n");
+            Log(fp, "Error happened when performing select()\n");
             return EXIT_FAILURE;
         }
         /* listen discriptor ready */
@@ -94,6 +80,7 @@ int main(int argc, char* argv[])
             if (newfd == -1)
             {
                 fprintf(stderr, "establishing new connection error\n");
+                Log(fp, "Error happened when trying to establish a new client connection.\n");
                 break;
             }
             else
@@ -112,8 +99,7 @@ int main(int argc, char* argv[])
 
 void usage(void)
 {
-    fprintf(stderr, "usage: ./lisod <HTTP port> <log file> "
-        "<www folder>.\n");
+    fprintf(stderr, "usage: ./lisod <HTTP port> <log file> <www folder>\n");
     exit(EXIT_FAILURE);
 }
 
@@ -125,6 +111,7 @@ int close_client_socket(int id, pool *p)
         Log(fp, "Failed closing socket.\n");
         return 1;
     }
+    Log(fp, "Close connection to client on socket: %d.\n", p->clientfd[id]);
     p->clientfd[id] = -1;
     return 0;
 }
@@ -187,7 +174,7 @@ void add_client(int client_socket, pool *p, struct sockaddr_in *cli_addr, int po
     int i;
     p->nready--;
 
-    for (i = 0; i < (FD_SETSIZE - 20); i++)
+    for (i = 0; i < (FD_SETSIZE - 5); i++)
     {
         if (p->clientfd[i] < 0)
         {
@@ -202,7 +189,8 @@ void add_client(int client_socket, pool *p, struct sockaddr_in *cli_addr, int po
     }
 }
 
-void handle_clients(int listen, pool *p) {
+void handle_clients(int listen, pool *p)
+{
     int i, curfd;
 
     for (i = 0; (i <= p->maxi) && (p->nready > 0); i++)
@@ -218,14 +206,15 @@ void handle_clients(int listen, pool *p) {
             process_request(i, p, context);
             if (!context->keep_alive)
             {
-                close_client_socket(curfd, p);
+                close_client_socket(i, p);
             }
             free(context);
         }
     }
 }
 
-void process_request(int i, pool *p, HTTPContext *context) {
+void process_request(int i, pool *p, HTTPContext *context)
+{
 
     int nbytes;
     char filename[BUFF_SIZE];
@@ -236,7 +225,8 @@ void process_request(int i, pool *p, HTTPContext *context) {
 
     nbytes = recv(curfd, buf, BUFF_SIZE, 0);
 
-    if (nbytes == 0) {
+    if (nbytes == 0)
+    {
         return;
     }
 
@@ -244,11 +234,9 @@ void process_request(int i, pool *p, HTTPContext *context) {
     {
         context->keep_alive = 0;
         Log(fp, "Error occurred when receiving data from client\n");
-        serve_error(curfd, context, "500", "Internal Server Error", "The server encountered unexpected error.");
+        serve_error_handler(curfd, context, "500", "Internal Server Error", "The server encountered unexpected error.");
         return;
     }
-
-    printf("%s\n", buf);
 
     Log(fp, "Server received %d bytes data on socket %d\n", (int)nbytes, curfd);
     /* parser handle the grammar check in request data */
@@ -257,7 +245,7 @@ void process_request(int i, pool *p, HTTPContext *context) {
     if (!context->is_valid)
     {
         context->keep_alive = 0;
-        serve_error(curfd, context, "400", "Bad Request", "The request line and header has error");
+        serve_error_handler(curfd, context, "400", "Bad Request", "The request line and header has error");
     }
 
     strcpy(context->method, request->http_method);
@@ -267,14 +255,14 @@ void process_request(int i, pool *p, HTTPContext *context) {
     if (!is_valid_method(request->http_method))
     {
         context->keep_alive = 0;
-        serve_error(curfd, context, "501", "Not Implemented", "The method is not implemented by the server");
+        serve_error_handler(curfd, context, "501", "Not Implemented", "The method is not implemented by the server");
         return;
     }
 
     if (strcasecmp(context->version, "HTTP/1.1"))
     {
         context->keep_alive = 0;
-        serve_error(curfd, context, "505", "HTTP Version not supported", "HTTP/1.0 is not supported by Liso server");
+        serve_error_handler(curfd, context, "505", "HTTP Version not supported", "HTTP/1.0 is not supported by Liso server");
         return;
     }
 
@@ -284,21 +272,20 @@ void process_request(int i, pool *p, HTTPContext *context) {
     if (stat(context->filename, &sbuf) < 0)
     {
         context->keep_alive = 0;
-        serve_error(curfd, context, "404", "Not Found", "File not found on Liso Server");
+        serve_error_handler(curfd, context, "404", "Not Found", "File not found on Liso Server");
         return;
     }
 
     /* parser of request header subroutine */
-    parse_header(request, context);
+    if (parse_header(curfd, request, context) != 0) return;
 
     if (!strcasecmp(context->method, "GET"))
-        serve_get(curfd, context);
+        serve_get_handler(curfd, context);
     if (!strcasecmp(context->method, "POST"))
-        serve_post(curfd, context);
+        serve_post_handler(curfd, context);
     if (!strcasecmp(context->method, "HEAD"))
-        serve_head(curfd, context);
+        serve_head_handler(curfd, context);
 
-    Log(fp, "Process request finished.\n");
 }
 
 int is_valid_method(char *method)
@@ -320,30 +307,25 @@ int is_valid_method(char *method)
 
 void get_time(char *date)
 {
-    time_t t;
-    struct tm *tmp;
-    t = time(NULL);
-    tmp = localtime(&t);
-    strftime(date, DATE_SIZE, "%a, %d %b %Y %T %Z", tmp);
+    struct tm tm;
+    time_t now;
+    now = time(0);
+    tm = *gmtime(&now);
+    strftime(date, DATE_SIZE, "%a, %d %b %Y %H:%M:%S GMT", &tm);
 }
 
 int parse_uri(pool *p, char *uri, char* filename)
 {
-    if (!strstr(uri, "/cgi/"))
+    strcpy(filename, p->www);
+    strcat(filename, uri);
+    if (uri[strlen(uri)-1] == '/')
     {
-        strcpy(filename, p->www);
-        strcat(filename, uri);
-        if (uri[strlen(uri)-1] == '/')
-        {
-            strcat(filename, "index.html");
-        }
-    } else {
-        // TODO: cgi
+        strcat(filename, "index.html");
     }
     return 0;
 }
 
-int parse_header(Request *request, HTTPContext *context)
+int parse_header(int socketfd, Request *request, HTTPContext *context)
 {
     char *value;
     if ((value = get_header_value_by_key("Connection", request)) != NULL)
@@ -353,6 +335,12 @@ int parse_header(Request *request, HTTPContext *context)
             context->keep_alive = 0;
         }
     }
+
+    if ((strcasecmp(context->method, "POST") == 0) && ((value = get_header_value_by_key("Content-Length", request)) == NULL))
+    {
+        serve_error_handler(socketfd, context, "411", "Length Required", "Liso Server require request with a defined Content-Length");
+        return 1;
+    }
     return 0;
 }
 
@@ -360,79 +348,75 @@ char *get_header_value_by_key(char *key, Request *request)
 {
     int count = request->header_count;
     int index;
-    for (index = 0; index < count; index++) {
-        if (strstr(request->headers[index].header_name, key)) {
+    for (index = 0; index < count; index++)
+    {
+        if (strstr(request->headers[index].header_name, key))
+        {
             return request->headers[index].header_value;
         }
     }
     return NULL;
 }
 
-void serve_error(int client_fd, HTTPContext *context, char *errnum, char *shortmsg, char *longmsg) {
-    struct tm tm;
-    time_t now;
-    char buf[BUFF_SIZE], body[BUFF_SIZE], dbuf[BUFF_SIZE];
+void serve_error_handler(int client_fd, HTTPContext *context, char *errnum, char *shortmsg, char *longmsg)
+{
+    char buff[BUFF_SIZE], body[BUFF_SIZE], date[BUFF_SIZE];
 
-    now = time(0);
-    tm = *gmtime(&now);
-    strftime(dbuf, DATE_SIZE, "%a, %d %b %Y %H:%M:%S %Z", &tm);
-
-    // build HTTP response body
-    sprintf(body, "<html><title>Lisod Error</title>");
+    // HTTP error response body
+    sprintf(body, "<html><title>Server Error</title>");
     sprintf(body, "%s<body>\r\n", body);
     sprintf(body, "%sError %s -- %s\r\n", body, errnum, shortmsg);
     sprintf(body, "%s<br><p>%s</p></body></html>\r\n", body, longmsg);
 
-    // print HTTP response
-    sprintf(buf, "HTTP/1.1 %s %s\r\n", errnum, shortmsg);
-    sprintf(buf, "%sDate: %s\r\n", buf, dbuf);
-    sprintf(buf, "%sServer: Liso/1.0\r\n", buf);
-    if (!context->keep_alive) sprintf(buf, "%sConnection: close\r\n", buf);
-    sprintf(buf, "%sContent-type: text/html\r\n", buf);
-    sprintf(buf, "%sContent-length: %d\r\n\r\n", buf, (int)strlen(body));
-    send(client_fd, buf, strlen(buf), 0);
+    get_time(date);
+
+    // HTTP error response header
+    sprintf(buff, "HTTP/1.1 %s %s\r\n", errnum, shortmsg);
+    sprintf(buff, "%sServer: Liso/1.0\r\n", buff);
+    sprintf(buff, "%sDate: %s\r\n", buff, date);
+    if (!context->keep_alive) sprintf(buff, "%sConnection: close\r\n", buff);
+    sprintf(buff, "%sContent-type: text/html\r\n", buff);
+    sprintf(buff, "%sContent-length: %d\r\n\r\n", buff, (int) strlen(body));
+
+    send(client_fd, buff, strlen(buff), 0);
     send(client_fd, body, strlen(body), 0);
 }
 
-void serve_get(int client_fd, HTTPContext *context)
+void serve_get_handler(int client_fd, HTTPContext *context)
 {
-    serve_head(client_fd, context);
-    serve_body(client_fd, context);
+    serve_head_handler(client_fd, context);
+    serve_body_handler(client_fd, context);
 }
 
-void serve_head(int client_fd, HTTPContext *context)
+void serve_head_handler(int client_fd, HTTPContext *context)
 {
     struct tm tm;
     struct stat sbuf;
-    time_t now;
-    char buf[BUFF_SIZE];
+    char buff[BUFF_SIZE];
     char filetype[MIN_LINE];
     char tbuf[DATE_SIZE];
-    char dbuf[DATE_SIZE];
+    char date[DATE_SIZE];
 
 
     get_filetype(context->filename, filetype);
-    printf("filetype: %s\n", filetype);
 
-    // get time string
-    tm = *gmtime(&sbuf.st_mtime);
-    strftime(tbuf, DATE_SIZE, "%a, %d %b %Y %H:%M:%S %Z", &tm);
-    now = time(0);
-    tm = *gmtime(&now);
-    strftime(dbuf, DATE_SIZE, "%a, %d %b %Y %H:%M:%S %Z", &tm);
-
+    // get modified time of file
     stat(context->filename, &sbuf);
+    tm = *gmtime(&sbuf.st_mtime);
+    strftime(tbuf, DATE_SIZE, "%a, %d %b %Y %H:%M:%S GMT", &tm);
 
-    // send response headers to client
-    sprintf(buf, "HTTP/1.1 200 OK\r\n");
-    sprintf(buf, "%sDate: %s\r\n", buf, dbuf);
-    sprintf(buf, "%sServer: Liso/1.0\r\n", buf);
-    if (!context->keep_alive) sprintf(buf, "%sConnection: keep-alive\r\n", buf);
-    sprintf(buf, "%sContent-Length: %lld\r\n", buf, sbuf.st_size);
-    sprintf(buf, "%sContent-Type: %s\r\n", buf, filetype);
-    sprintf(buf, "%sCache-Control: no-cache\r\n", buf);
-    sprintf(buf, "%sLast-Modified: %s\r\n\r\n", buf, tbuf);
-    send(client_fd, buf, strlen(buf), 0);
+    get_time(date);
+
+    // HTTP response header
+    sprintf(buff, "HTTP/1.1 200 OK\r\n");
+    sprintf(buff, "%sServer: Liso/1.0\r\n", buff);
+    sprintf(buff, "%sDate: %s\r\n", buff, date);
+    if (!context->keep_alive) sprintf(buff, "%sConnection: keep-alive\r\n", buff);
+    sprintf(buff, "%sContent-Length: %lld\r\n", buff, sbuf.st_size);
+    sprintf(buff, "%sContent-Type: %s\r\n", buff, filetype);
+    sprintf(buff, "%sCache-Control: no-cache\r\n", buff);
+    sprintf(buff, "%sLast-Modified: %s\r\n\r\n", buff, tbuf);
+    send(client_fd, buff, strlen(buff), 0);
 }
 
 void get_filetype(char *filename, char *filetype)
@@ -453,7 +437,7 @@ void get_filetype(char *filename, char *filetype)
         strcpy(filetype, "text/plain");
 }
 
-int serve_body(int client_fd, HTTPContext *context)
+int serve_body_handler(int client_fd, HTTPContext *context)
 {
     int fd, filesize;
     char *ptr;
@@ -461,7 +445,8 @@ int serve_body(int client_fd, HTTPContext *context)
     if ((fd = open(context->filename, O_RDONLY, 0)) < 0)
     {
         Log(fp, "Error: Cann't open file \n");
-        return -1; ///TODO what error code here should be?
+        serve_error_handler(client_fd, context, "500", "Internal Server Error", "The server encountered an unexpected condition");
+        return -1;
     }
     stat(context->filename, &sbuf);
     filesize = sbuf.st_size;
@@ -469,12 +454,22 @@ int serve_body(int client_fd, HTTPContext *context)
     close(fd);
     int nbytes;
     nbytes = send(client_fd, ptr, filesize, 0);
-    printf("Liso server send %d data\n", nbytes);
     munmap(ptr, filesize);
     return 0;
 }
 
-void serve_post(int client_fd, HTTPContext *context)
+void serve_post_handler(int client_fd, HTTPContext *context)
 {
-    return;
+    char buff[BUFF_SIZE];
+    char date[DATE_SIZE];
+
+    get_time(date);
+
+    sprintf(buff, "HTTP/1.1 204 No Content\r\n");
+    sprintf(buff, "%sServer: Liso/1.0\r\n", buff);
+    sprintf(buff, "%sDate: %s\r\n", buff, date);
+    if (!context->keep_alive) sprintf(buff, "%sConnection: close\r\n", buff);
+    sprintf(buff, "%sContent-Length: 0\r\n", buff);
+    sprintf(buff, "%sContent-Type: text/html\r\n\r\n", buff);
+    send(client_fd, buff, strlen(buff), 0);
 }

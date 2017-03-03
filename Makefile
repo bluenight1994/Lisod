@@ -13,12 +13,12 @@
 CC=gcc
 CFLAGS=-I.
 DEPS = parse.h y.tab.h log.h
-OBJ = y.tab.o lex.yy.o log.o parse.o lisod.o
+OBJ = y.tab.o lex.yy.o log.o parse.o liso.o
 FLAGS = -g -Wall
 
 default:all
 
-all: lisod
+all: liso
 
 lex.yy.c: lexer.l
 	flex $^
@@ -29,7 +29,7 @@ y.tab.c: parser.y
 %.o: %.c $(DEPS)
 	$(CC) $(FLAGS) -c -o $@ $< $(CFLAGS)
 
-lisod: $(OBJ)
+liso: $(OBJ)
 	$(CC) -o $@ $^ $(CFLAGS)
 
 clean:
