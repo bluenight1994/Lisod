@@ -61,6 +61,9 @@ int main(int argc, char* argv[])
     init_pool(listen_sock, &pool);
 
     pool.www = argv[3];
+    if (pool.www[strlen(pool.www)-1] != '/') {
+        strcat(pool.www, "/");
+    }
 
     while (1)
     {
@@ -309,11 +312,14 @@ void get_time(char *date)
 int parse_uri(pool *p, char *uri, char* filename)
 {
     strcpy(filename, p->www);
-    strcat(filename, uri);
     if (uri[strlen(uri)-1] == '/')
     {
         strcat(filename, "index.html");
+        return 0;
     }
+    char *pt = uri;
+    while (*pt == '.' || *pt == '/') {pt++;}
+    strcat(filename, pt);
     return 0;
 }
 
@@ -328,11 +334,11 @@ int parse_header(int socketfd, Request *request, HTTPContext *context)
         }
     }
 
-    if ((strcasecmp(context->method, "POST") == 0) && ((value = get_header_value_by_key("Content-Length", request)) == NULL))
-    {
-        serve_error_handler(socketfd, context, "411", "Length Required", "Liso Server require request with a defined Content-Length");
-        return 1;
-    }
+    // if ((strcasecmp(context->method, "POST") == 0) && ((value = get_header_value_by_key("Content-Length", request)) == NULL))
+    // {
+    //     serve_error_handler(socketfd, context, "411", "Length Required", "Liso Server require request with a defined Content-Length");
+    //     return 1;
+    // }
     return 0;
 }
 
@@ -443,7 +449,7 @@ void serve_post_handler(int client_fd, HTTPContext *context)
 
     get_time(date);
 
-    sprintf(buff, "HTTP/1.1 204 No Content\r\n");
+    sprintf(buff, "HTTP/1.1 200 No Content\r\n");
     sprintf(buff, "%sServer: Liso/1.0\r\n", buff);
     sprintf(buff, "%sDate: %s\r\n", buff, date);
     if (!context->keep_alive) sprintf(buff, "%sConnection: close\r\n", buff);
